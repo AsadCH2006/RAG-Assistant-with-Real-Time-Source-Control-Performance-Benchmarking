@@ -1,13 +1,13 @@
 streamlit
-pandas
-python-dotenv
 langchain
 langchain-community
-langchain-huggingface
 langchain-chroma
-langchain-openai
+langchain-huggingface
 langchain-groq
 chromadb
 sentence-transformers
 pypdf
 docx2txt
+pandas
+python-dotenv
+httpx
