@@ -21,7 +21,7 @@ env_path = ROOT_DIR / ".env"
 load_dotenv(dotenv_path=env_path, override=True)
 
 # -----------------------------------------------------------------------------
-# Page Configuration
+# 1. Page Configuration
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Dynamic RAG Knowledge Base",
@@ -31,52 +31,85 @@ st.set_page_config(
 )
 
 # -----------------------------------------------------------------------------
-# Sidebar Configuration & Secrets Fallback
+# 2. Custom CSS Theme Styling
 # -----------------------------------------------------------------------------
-st.sidebar.title("⚡ Control Panel")
-st.sidebar.caption("RAG Control & Performance Monitor")
-st.sidebar.markdown("---")
+st.markdown("""
+    <style>
+    .stApp {
+        background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+        color: #c9d1d9;
+    }
+    section[data-testid="stSidebar"] {
+        background-color: #0d1117 !important;
+        border-right: 1px solid #30363d;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 1.8rem !important;
+        color: #58a6ff !important;
+    }
+    .stMetric {
+        background: rgba(22, 27, 34, 0.6);
+        border: 1px solid #30363d;
+        padding: 12px;
+        border-radius: 8px;
+    }
+    .stButton>button {
+        border-radius: 6px;
+        border: 1px solid #30363d;
+        transition: all 0.2s ease-in-out;
+    }
+    .stButton>button:hover {
+        border-color: #58a6ff;
+        color: #58a6ff;
+    }
+    .streamlit-expanderHeader {
+        background-color: rgba(22, 27, 34, 0.8) !important;
+        border-radius: 6px;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-st.sidebar.subheader("🔑 API Credentials")
+# Initialize Session State Variables Early
+if "benchmark_logs" not in st.session_state:
+    st.session_state.benchmark_logs = []
 
-# Fetch keys from environment or Streamlit Secrets (Cloud deployment)
-openai_api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
-groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", "")
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-# Fallback UI inputs if missing
-user_openai_key = st.sidebar.text_input(
-    "OpenAI Key", 
-    value=openai_api_key, 
-    type="password",
-    help="Required for OpenAI LLM or default verification."
-)
+# -----------------------------------------------------------------------------
+# 3. Sidebar Configuration (API Credentials Hidden)
+# -----------------------------------------------------------------------------
+with st.sidebar:
+    st.title("⚡ Control Panel")
+    st.caption("RAG Control & Performance Monitor")
+    st.divider()
 
-user_groq_key = st.sidebar.text_input(
-    "Groq Key", 
-    value=groq_api_key, 
-    type="password",
-    help="Recommended for ultra-fast Llama-3 inference."
-)
+    st.subheader("⚙️ Retrieval Parameters")
+    top_k = st.slider("Top K Retrieved Chunks", min_value=1, max_value=10, value=4)
 
-if user_openai_key:
-    os.environ["OPENAI_API_KEY"] = user_openai_key
-if user_groq_key:
-    os.environ["GROQ_API_KEY"] = user_groq_key
+    st.divider()
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ Retrieval Parameters")
-top_k = st.sidebar.slider("Top K Retrieved Chunks", min_value=1, max_value=10, value=4)
+    # Load API keys silently from Streamlit Secrets or local environment
+    openai_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
+    groq_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", "")
 
-st.sidebar.markdown("---")
-st.sidebar.caption("Status: **Active System Online 🟢**")
+    if openai_key:
+        os.environ["OPENAI_API_KEY"] = openai_key
+    if groq_key:
+        os.environ["GROQ_API_KEY"] = groq_key
 
-# Halt execution if no OpenAI key is set
+    if openai_key or groq_key:
+        st.caption("Status: **Active System Online** 🟢")
+    else:
+        st.caption("Status: **Missing API Keys** 🔴")
+
+# Block execution if backend server key is missing
 if not os.getenv("OPENAI_API_KEY"):
-    st.error("⚠️ Please provide an OpenAI API Key in the sidebar or via Streamlit Secrets / .env file to initialize the application.")
+    st.error("⚠️ System Offline: Server API Key missing. Please set 'OPENAI_API_KEY' in Streamlit Cloud Secrets.")
     st.stop()
 
 # -----------------------------------------------------------------------------
-# System Initialization (Session State)
+# 4. Initialize RAG Modules
 # -----------------------------------------------------------------------------
 if "vector_manager" not in st.session_state:
     st.session_state.vector_manager = RAGVectorManager(persist_directory="./vector_db")
@@ -87,20 +120,34 @@ if "rag_engine" not in st.session_state:
         llm_provider="groq" if os.getenv("GROQ_API_KEY") else "openai"
     )
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-if "latency_logs" not in st.session_state:
-    st.session_state.latency_logs = []
-
 UPLOAD_DIR = ROOT_DIR / "temp_uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 # -----------------------------------------------------------------------------
-# Main Application UI & Navigation Tabs
+# 5. Dashboard Summary Header
 # -----------------------------------------------------------------------------
 st.title("🧠 Dynamic RAG Knowledge Base")
+st.markdown("Dynamic knowledge base query assistant powered by local sentence embeddings and vector analytics.")
 
+indexed_files = st.session_state.vector_manager.list_indexed_files()
+total_queries = len(st.session_state.benchmark_logs)
+
+if total_queries > 0:
+    df_metrics = pd.DataFrame(st.session_state.benchmark_logs)
+    avg_latency = f"{df_metrics['latency_sec'].mean():.3f}s"
+else:
+    avg_latency = "N/A"
+
+col1, col2, col3 = st.columns(3)
+col1.metric("Indexed Documents", len(indexed_files))
+col2.metric("Total Queries Executed", total_queries)
+col3.metric("Avg Response Time", avg_latency)
+
+st.divider()
+
+# -----------------------------------------------------------------------------
+# 6. Main Navigation Tabs
+# -----------------------------------------------------------------------------
 tab1, tab2, tab3 = st.tabs(["💬 Chat Assistant", "📂 Real-Time Source Control", "📊 Performance Benchmarking"])
 
 # -----------------------------------------------------------------------------
@@ -118,7 +165,7 @@ with tab1:
                     for src in message["sources"]:
                         st.markdown(
                             f"**File:** `{src['filename']}` | **Chunk:** `{src['chunk_index']}` | "
-                            f"**Score:** `{src['score']:.4f}`"
+                            f"**Similarity Score:** `{src['score']:.4f}`"
                         )
                         st.caption(src["content"])
 
@@ -129,10 +176,10 @@ with tab1:
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            with st.spinner("Searching knowledge base & generating response..."):
+            with st.spinner("Retrieving vector contexts & benchmarking response..."):
                 start_time = time.time()
                 response = st.session_state.rag_engine.generate_response(query=prompt, top_k=top_k)
-                elapsed_time = round(time.time() - start_time, 2)
+                latency = time.time() - start_time
 
                 st.markdown(response["answer"])
 
@@ -141,90 +188,83 @@ with tab1:
                         for src in response["sources"]:
                             st.markdown(
                                 f"**File:** `{src['filename']}` | **Chunk:** `{src['chunk_index']}` | "
-                                f"**Score:** `{src['score']:.4f}`"
+                                f"**Similarity Score:** `{src['score']:.4f}`"
                             )
                             st.caption(src["content"])
 
-                # Log Telemetry Metrics
-                st.session_state.latency_logs.append({
-                    "Timestamp": time.strftime("%H:%M:%S"),
-                    "Query": prompt,
-                    "Latency (s)": elapsed_time,
-                    "Chunks Retrieved": len(response["sources"])
-                })
+        st.session_state.benchmark_logs.append({
+            "timestamp": time.strftime("%H:%M:%S"),
+            "query": prompt,
+            "latency_sec": round(latency, 3),
+            "retrieved_chunks": len(response["sources"]),
+            "top_score": round(response["sources"][0]["score"], 4) if response["sources"] else 0.0
+        })
 
         st.session_state.messages.append({
             "role": "assistant",
             "content": response["answer"],
             "sources": response["sources"]
         })
+        st.rerun()
 
 # -----------------------------------------------------------------------------
-# TAB 2: Dynamic Source Manager
+# TAB 2: Real-Time Source Control
 # -----------------------------------------------------------------------------
 with tab2:
-    st.header("Document Management")
-    
-    col1, col2 = st.columns([1, 1])
+    st.header("📂 Real-Time Knowledge Base Management")
+    c1, c2 = st.columns([1, 1])
 
-    # Upload Section
-    with col1:
-        st.subheader("Upload New Document")
-        uploaded_file = st.file_uploader(
-            "Choose a file (PDF, TXT, DOCX)",
-            type=["pdf", "txt", "docx"]
-        )
+    with c1:
+        st.subheader("Add Document")
+        uploaded_file = st.file_uploader("Upload PDF, TXT, or DOCX", type=["pdf", "txt", "docx"])
 
         if uploaded_file is not None:
-            if st.button("Process & Index Document", type="primary"):
+            if st.button("⚡ Index Document", type="primary"):
                 file_path = UPLOAD_DIR / uploaded_file.name
                 with open(file_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
 
-                with st.spinner(f"Indexing '{uploaded_file.name}' into ChromaDB..."):
+                with st.spinner(f"Splitting & embedding '{uploaded_file.name}'..."):
                     st.session_state.vector_manager.process_and_add_document(str(file_path))
-                    st.success(f"Indexed `{uploaded_file.name}` successfully!")
+                    st.success(f"Indexed `{uploaded_file.name}` into ChromaDB!")
 
                 if file_path.exists():
                     os.remove(file_path)
                 st.rerun()
 
-    # Active Vector Files & Deletion
-    with col2:
-        st.subheader("Active Knowledge Base Documents")
-        indexed_files = st.session_state.vector_manager.list_indexed_files()
+    with c2:
+        st.subheader("Active Knowledge Base Index")
+        current_files = st.session_state.vector_manager.list_indexed_files()
 
-        if not indexed_files:
-            st.info("No documents currently indexed in ChromaDB.")
+        if not current_files:
+            st.info("No documents indexed in the vector store.")
         else:
-            for filename in indexed_files:
-                f_col1, f_col2 = st.columns([3, 1])
-                f_col1.write(f"📄 **{filename}**")
-                
-                if f_col2.button("Delete", key=f"del_{filename}"):
-                    with st.spinner(f"Purging vectors for '{filename}'..."):
-                        st.session_state.vector_manager.delete_document_by_filename(filename)
-                        st.success(f"Deleted `{filename}` vectors.")
+            for fname in current_files:
+                fc1, fc2 = st.columns([3, 1])
+                fc1.write(f"📄 **{fname}**")
+                if fc2.button("Remove", key=f"del_{fname}"):
+                    st.session_state.vector_manager.delete_document_by_filename(fname)
+                    st.success(f"Removed vectors for `{fname}`")
                     st.rerun()
 
 # -----------------------------------------------------------------------------
 # TAB 3: Performance Benchmarking
 # -----------------------------------------------------------------------------
 with tab3:
-    st.header("Performance & Telemetry Dashboard")
+    st.header("📊 Real-Time Performance Benchmarking")
 
-    if not st.session_state.latency_logs:
-        st.info("No query metrics recorded yet. Ask a question in the Chat Assistant tab to view live performance telemetry.")
+    if not st.session_state.benchmark_logs:
+        st.info("No benchmarking telemetry gathered yet. Submit questions in the Chat tab to log latency metrics.")
     else:
-        df_logs = pd.DataFrame(st.session_state.latency_logs)
-        
-        m_col1, m_col2, m_col3 = st.columns(3)
-        m_col1.metric("Total Queries Executed", len(df_logs))
-        m_col2.metric("Average Latency", f"{df_logs['Latency (s)'].mean():.2f}s")
-        m_col3.metric("Max Latency", f"{df_logs['Latency (s)'].max():.2f}s")
+        df_bench = pd.DataFrame(st.session_state.benchmark_logs)
 
-        st.subheader("Query Execution History")
-        st.dataframe(df_logs, use_container_width=True)
+        b_col1, b_col2, b_col3 = st.columns(3)
+        b_col1.metric("Min Latency", f"{df_bench['latency_sec'].min():.3f}s")
+        b_col2.metric("Max Latency", f"{df_bench['latency_sec'].max():.3f}s")
+        b_col3.metric("Avg Similarity Score", f"{df_bench['top_score'].mean():.4f}")
 
-        st.subheader("Latency Trend")
-        st.line_chart(df_logs, x="Timestamp", y="Latency (s)")
+        st.subheader("Latency Analytics History")
+        st.line_chart(df_bench.set_index("timestamp")["latency_sec"])
+
+        st.subheader("Detailed Query Benchmark Logs")
+        st.dataframe(df_bench, use_container_width=True)
