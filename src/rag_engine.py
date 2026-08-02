@@ -12,12 +12,12 @@ class RAGEngine:
         self.persist_directory = persist_directory
         self.llm_provider = llm_provider
 
-        # 1. Local Embeddings
+        # 1. Local HuggingFace Embeddings
         self.embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
 
-        # 2. Vector DB
+        # 2. Vector DB Storage
         self.vector_store = Chroma(
             persist_directory=self.persist_directory,
             embedding_function=self.embeddings,
@@ -27,9 +27,10 @@ class RAGEngine:
         # 3. Prompt Template
         template = (
             "You are a helpful AI Assistant.\n"
-            "Answer the question using ONLY the context provided below.\n"
-            "If the user asks for a general summary or overview of the document, provide a comprehensive summary from the context.\n"
-            "If the context contains no relevant details to answer, state 'I cannot find relevant information in the uploaded documents.'\n\n"
+            "Answer the user's question using ONLY the provided document context below.\n"
+            "If the user asks to describe, summarize, or highlight key aspects of the document/resume, "
+            "provide a comprehensive summary based on the context.\n"
+            "If the information is missing from the context, state 'I cannot find relevant information in the uploaded documents.'\n\n"
             "Context:\n{context}\n\n"
             "Question: {question}\n\n"
             "Answer:"
@@ -37,7 +38,7 @@ class RAGEngine:
         self.prompt_template = ChatPromptTemplate.from_template(template)
 
     def _get_api_key(self, key_name: str) -> str:
-        """Helper to safely fetch keys from Streamlit secrets or OS env."""
+        """Retrieves key from Streamlit secrets or OS environment variables."""
         if hasattr(st, "secrets") and key_name in st.secrets:
             return st.secrets[key_name]
         return os.getenv(key_name, "")
@@ -46,10 +47,9 @@ class RAGEngine:
         gemini_key = self._get_api_key("GEMINI_API_KEY")
         if not gemini_key:
             return None
-            
         from langchain_google_genai import ChatGoogleGenerativeAI
         return ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
+            model="gemini-2.5-flash",
             google_api_key=gemini_key,
             temperature=0.1,
             max_retries=1
@@ -59,7 +59,6 @@ class RAGEngine:
         groq_key = self._get_api_key("GROQ_API_KEY")
         if not groq_key:
             return None
-        
         from langchain_groq import ChatGroq
         custom_http_client = httpx.Client(timeout=15.0, follow_redirects=True)
         return ChatGroq(
@@ -90,27 +89,27 @@ class RAGEngine:
 
         context_str = "\n\n---\n\n".join(context_blocks) if context_blocks else "No relevant context found."
 
-        # Attempt Primary Provider
-        primary_llm = self._get_gemini_llm() if self.llm_provider == "gemini" else self._get_groq_llm()
-        if primary_llm:
+        # Attempt Gemini first
+        gemini_llm = self._get_gemini_llm()
+        if gemini_llm:
             try:
-                chain = self.prompt_template | primary_llm | StrOutputParser()
+                chain = self.prompt_template | gemini_llm | StrOutputParser()
                 answer = chain.invoke({"context": context_str, "question": query})
                 return {"answer": answer, "sources": sources}
             except Exception as e:
-                print(f"[Primary LLM Error]: {e}")
+                st.error(f"Gemini API Error: {str(e)}")
 
-        # Attempt Secondary Provider
-        fallback_llm = self._get_groq_llm() if self.llm_provider == "gemini" else self._get_gemini_llm()
-        if fallback_llm:
+        # Fallback to Groq
+        groq_llm = self._get_groq_llm()
+        if groq_llm:
             try:
-                chain = self.prompt_template | fallback_llm | StrOutputParser()
+                chain = self.prompt_template | groq_llm | StrOutputParser()
                 answer = chain.invoke({"context": context_str, "question": query})
                 return {"answer": answer, "sources": sources}
             except Exception as e:
-                print(f"[Fallback LLM Error]: {e}")
+                st.error(f"Groq API Error: {str(e)}")
 
         return {
-            "answer": "⚠️ Connection error: Check that GEMINI_API_KEY or GROQ_API_KEY is correctly set in Streamlit Cloud Secrets.",
+            "answer": "⚠️ API Keys missing or invalid. Please check Secrets in Streamlit Cloud Settings.",
             "sources": sources
         }
