@@ -12,10 +12,6 @@ import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
-# Import custom RAG modules from src/
-from src.ingestion import RAGVectorManager
-from src.rag_engine import RAGEngine
-
 # Force load local .env if available
 env_path = ROOT_DIR / ".env"
 load_dotenv(dotenv_path=env_path, override=True)
@@ -77,7 +73,7 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 # -----------------------------------------------------------------------------
-# 3. Sidebar Configuration (API Credentials Hidden)
+# 3. Sidebar Configuration (API Credentials Managed Silently)
 # -----------------------------------------------------------------------------
 with st.sidebar:
     st.title("⚡ Control Panel")
@@ -90,8 +86,8 @@ with st.sidebar:
     st.divider()
 
     # Load API keys silently from Streamlit Secrets or local environment
-    openai_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
-    groq_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", "")
+    openai_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
+    groq_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY", "")
 
     if openai_key:
         os.environ["OPENAI_API_KEY"] = openai_key
@@ -104,9 +100,13 @@ with st.sidebar:
         st.caption("Status: **Missing API Keys** 🔴")
 
 # Block execution if backend server key is missing
-if not os.getenv("OPENAI_API_KEY"):
-    st.error("⚠️ System Offline: Server API Key missing. Please set 'OPENAI_API_KEY' in Streamlit Cloud Secrets.")
+if not (os.getenv("OPENAI_API_KEY") or os.getenv("GROQ_API_KEY")):
+    st.error("⚠️ System Offline: Server API Key missing. Please set 'OPENAI_API_KEY' or 'GROQ_API_KEY' in Streamlit Cloud Secrets.")
     st.stop()
+
+# Import custom RAG modules from src/ after setting environment keys
+from src.ingestion import RAGVectorManager
+from src.rag_engine import RAGEngine
 
 # -----------------------------------------------------------------------------
 # 4. Initialize RAG Modules
@@ -114,10 +114,13 @@ if not os.getenv("OPENAI_API_KEY"):
 if "vector_manager" not in st.session_state:
     st.session_state.vector_manager = RAGVectorManager(persist_directory="./vector_db")
 
+# Default provider selection based on key availability
+llm_provider = "groq" if os.getenv("GROQ_API_KEY") else "openai"
+
 if "rag_engine" not in st.session_state:
     st.session_state.rag_engine = RAGEngine(
         persist_directory="./vector_db",
-        llm_provider="groq" if os.getenv("GROQ_API_KEY") else "openai"
+        llm_provider=llm_provider
     )
 
 UPLOAD_DIR = ROOT_DIR / "temp_uploads"
@@ -176,9 +179,25 @@ with tab1:
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
-            with st.spinner("Retrieving vector contexts & benchmarking response..."):
+            with st.spinner("Retrieving vector contexts & generating response..."):
                 start_time = time.time()
-                response = st.session_state.rag_engine.generate_response(query=prompt, top_k=top_k)
+                
+                # Execute generation with connection error handling
+                try:
+                    response = st.session_state.rag_engine.generate_response(query=prompt, top_k=top_k)
+                except Exception as e:
+                    # Fallback to OpenAI if Groq API fails
+                    if "groq" in str(e).lower() and os.getenv("OPENAI_API_KEY"):
+                        st.warning("⚠️ Groq connection failed. Falling back to OpenAI...")
+                        st.session_state.rag_engine = RAGEngine(
+                            persist_directory="./vector_db",
+                            llm_provider="openai"
+                        )
+                        response = st.session_state.rag_engine.generate_response(query=prompt, top_k=top_k)
+                    else:
+                        st.error(f"Execution Error: {str(e)}")
+                        st.stop()
+
                 latency = time.time() - start_time
 
                 st.markdown(response["answer"])
