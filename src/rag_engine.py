@@ -51,14 +51,14 @@ class RAGEngine:
         )
 
     def _get_gemini_llm(self):
-        """Build Gemini LLM instance."""
+        """Build Gemini LLM instance using Gemini 3.1."""
         gemini_key = os.getenv("GEMINI_API_KEY")
         if not gemini_key:
             return None
             
         from langchain_google_genai import ChatGoogleGenerativeAI
         return ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model="gemini-3.1-flash-lite",
             google_api_key=gemini_key,
             temperature=0.1
         )
@@ -101,7 +101,7 @@ class RAGEngine:
             except Exception:
                 pass
 
-        # 3. Final Fallback to Gemini
+        # 3. Final Fallback to Gemini 3.1 Flash-Lite
         gemini_llm = self._get_gemini_llm()
         if gemini_llm:
             chain = self.prompt_template | gemini_llm | StrOutputParser()
