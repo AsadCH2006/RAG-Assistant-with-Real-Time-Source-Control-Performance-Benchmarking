@@ -1,4 +1,5 @@
 import os
+import httpx
 from typing import List, Dict, Any
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -15,25 +16,29 @@ class RAGEngine:
             model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
 
-        # 2. Vector DB
+        # 2. Vector DB Storage
         self.vector_store = Chroma(
             persist_directory=self.persist_directory,
             embedding_function=self.embeddings,
             collection_name="rag_collection"
         )
 
-        # 3. Groq LLM (Free Inference)
+        # 3. Groq Setup with explicit HTTP client to bypass network drops
         groq_api_key = os.getenv("GROQ_API_KEY")
         if not groq_api_key:
             raise ValueError("GROQ_API_KEY environment variable is missing.")
 
+        # Create custom httpx client to prevent connection timeouts on Cloud
+        custom_http_client = httpx.Client(timeout=30.0, follow_redirects=True)
+
         self.llm = ChatGroq(
             model_name="llama-3.3-70b-versatile",
             temperature=0.1,
-            api_key=groq_api_key
+            api_key=groq_api_key,
+            http_client=custom_http_client
         )
 
-        # 4. Prompt Template
+        # 4. Strict Grounded Prompt
         template = (
             "You are a helpful AI Assistant.\n"
             "Answer the question using ONLY the context provided below.\n"
