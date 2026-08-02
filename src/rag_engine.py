@@ -26,8 +26,10 @@ class RAGEngine:
         # 3. Prompt Template
         template = (
             "You are a helpful AI Assistant.\n"
-            "Answer the question using ONLY the context provided below.\n"
-            "If the answer is not contained in the context, say 'I cannot find relevant information in the uploaded documents.'\n\n"
+            "Answer the question using the context provided below.\n"
+            "If the question is a broad query (like asking to summarize or describe the document), "
+            "provide a clear overview based on the retrieved context.\n"
+            "If the answer truly cannot be deduced from the context, state 'I cannot find relevant information in the uploaded documents.'\n\n"
             "Context:\n{context}\n\n"
             "Question: {question}\n\n"
             "Answer:"
@@ -51,30 +53,34 @@ class RAGEngine:
         )
 
     def _get_gemini_llm(self):
-        """Build Gemini LLM instance using Gemini 3.1."""
+        """Build Gemini LLM instance."""
         gemini_key = os.getenv("GEMINI_API_KEY")
         if not gemini_key:
             return None
             
         from langchain_google_genai import ChatGoogleGenerativeAI
         return ChatGoogleGenerativeAI(
-            model="gemini-3.1-flash-lite",
+            model="gemini-2.0-flash",
             google_api_key=gemini_key,
             temperature=0.1
         )
 
     def generate_response(self, query: str, top_k: int = 4) -> Dict[str, Any]:
-        results = self.vector_store.similarity_search_with_relevance_scores(query, k=top_k)
+        # Use simple similarity search to prevent distance score filtering drops
+        try:
+            docs = self.vector_store.similarity_search(query, k=top_k)
+        except Exception:
+            docs = []
 
         context_blocks = []
         sources = []
 
-        for idx, (doc, score) in enumerate(results):
+        for idx, doc in enumerate(docs):
             context_blocks.append(doc.page_content)
             sources.append({
                 "filename": doc.metadata.get("filename", "Unknown"),
                 "chunk_index": doc.metadata.get("chunk_index", idx),
-                "score": float(score),
+                "score": 1.0,
                 "content": doc.page_content[:300] + "..."
             })
 
@@ -101,7 +107,7 @@ class RAGEngine:
             except Exception:
                 pass
 
-        # 3. Final Fallback to Gemini 3.1 Flash-Lite
+        # 3. Final Fallback to Gemini
         gemini_llm = self._get_gemini_llm()
         if gemini_llm:
             chain = self.prompt_template | gemini_llm | StrOutputParser()
