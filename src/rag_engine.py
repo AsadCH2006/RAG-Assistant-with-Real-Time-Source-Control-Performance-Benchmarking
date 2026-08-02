@@ -1,7 +1,7 @@
 import os
-import time
 import httpx
 from typing import List, Dict, Any
+import streamlit as st
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
@@ -12,12 +12,12 @@ class RAGEngine:
         self.persist_directory = persist_directory
         self.llm_provider = llm_provider
 
-        # 1. Local HuggingFace Embeddings
+        # 1. Local Embeddings
         self.embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
 
-        # 2. Vector DB Storage
+        # 2. Vector DB
         self.vector_store = Chroma(
             persist_directory=self.persist_directory,
             embedding_function=self.embeddings,
@@ -28,31 +28,35 @@ class RAGEngine:
         template = (
             "You are a helpful AI Assistant.\n"
             "Answer the question using ONLY the context provided below.\n"
-            "If the question is a general overview or summary request, provide a concise summary based on the context.\n"
-            "If the answer cannot be deduced from the context, state 'I cannot find relevant information in the uploaded documents.'\n\n"
+            "If the user asks for a general summary or overview of the document, provide a comprehensive summary from the context.\n"
+            "If the context contains no relevant details to answer, state 'I cannot find relevant information in the uploaded documents.'\n\n"
             "Context:\n{context}\n\n"
             "Question: {question}\n\n"
             "Answer:"
         )
         self.prompt_template = ChatPromptTemplate.from_template(template)
 
+    def _get_api_key(self, key_name: str) -> str:
+        """Helper to safely fetch keys from Streamlit secrets or OS env."""
+        if hasattr(st, "secrets") and key_name in st.secrets:
+            return st.secrets[key_name]
+        return os.getenv(key_name, "")
+
     def _get_gemini_llm(self):
-        """Build Gemini LLM instance."""
-        gemini_key = os.getenv("GEMINI_API_KEY")
+        gemini_key = self._get_api_key("GEMINI_API_KEY")
         if not gemini_key:
             return None
             
         from langchain_google_genai import ChatGoogleGenerativeAI
         return ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model="gemini-1.5-flash",
             google_api_key=gemini_key,
             temperature=0.1,
             max_retries=1
         )
 
     def _get_groq_llm(self):
-        """Build Groq LLM instance."""
-        groq_key = os.getenv("GROQ_API_KEY")
+        groq_key = self._get_api_key("GROQ_API_KEY")
         if not groq_key:
             return None
         
@@ -67,7 +71,6 @@ class RAGEngine:
         )
 
     def generate_response(self, query: str, top_k: int = 4) -> Dict[str, Any]:
-        # Perform Vector Similarity Search
         try:
             docs = self.vector_store.similarity_search(query, k=top_k)
         except Exception:
@@ -87,29 +90,27 @@ class RAGEngine:
 
         context_str = "\n\n---\n\n".join(context_blocks) if context_blocks else "No relevant context found."
 
-        # 1. First Attempt: Selected Provider
+        # Attempt Primary Provider
         primary_llm = self._get_gemini_llm() if self.llm_provider == "gemini" else self._get_groq_llm()
         if primary_llm:
             try:
                 chain = self.prompt_template | primary_llm | StrOutputParser()
                 answer = chain.invoke({"context": context_str, "question": query})
                 return {"answer": answer, "sources": sources}
-            except Exception as primary_error:
-                # Log error and trigger failover if rate limited or unavailable
-                pass
+            except Exception as e:
+                print(f"[Primary LLM Error]: {e}")
 
-        # 2. Fallback Attempt: Secondary Provider
+        # Attempt Secondary Provider
         fallback_llm = self._get_groq_llm() if self.llm_provider == "gemini" else self._get_gemini_llm()
         if fallback_llm:
             try:
                 chain = self.prompt_template | fallback_llm | StrOutputParser()
                 answer = chain.invoke({"context": context_str, "question": query})
                 return {"answer": answer, "sources": sources}
-            except Exception as fallback_error:
-                pass
+            except Exception as e:
+                print(f"[Fallback LLM Error]: {e}")
 
-        # 3. Graceful User Notice if both quotas/connections fail
         return {
-            "answer": "⚠️ Both Gemini and Groq API services are currently rate-limited or unreachable. Please wait 60 seconds and try again.",
+            "answer": "⚠️ Connection error: Check that GEMINI_API_KEY or GROQ_API_KEY is correctly set in Streamlit Cloud Secrets.",
             "sources": sources
         }
