@@ -1,4 +1,5 @@
 import os
+import time
 import httpx
 from typing import List, Dict, Any
 from langchain_chroma import Chroma
@@ -7,7 +8,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 class RAGEngine:
-    def __init__(self, persist_directory: str = "./vector_db", llm_provider: str = "groq"):
+    def __init__(self, persist_directory: str = "./vector_db", llm_provider: str = "gemini"):
         self.persist_directory = persist_directory
         self.llm_provider = llm_provider
 
@@ -26,15 +27,28 @@ class RAGEngine:
         # 3. Prompt Template
         template = (
             "You are a helpful AI Assistant.\n"
-            "Answer the question using the context provided below.\n"
-            "If the question is a broad query (like asking to summarize or describe the document), "
-            "provide a clear overview based on the retrieved context.\n"
-            "If the answer truly cannot be deduced from the context, state 'I cannot find relevant information in the uploaded documents.'\n\n"
+            "Answer the question using ONLY the context provided below.\n"
+            "If the question is a general overview or summary request, provide a concise summary based on the context.\n"
+            "If the answer cannot be deduced from the context, state 'I cannot find relevant information in the uploaded documents.'\n\n"
             "Context:\n{context}\n\n"
             "Question: {question}\n\n"
             "Answer:"
         )
         self.prompt_template = ChatPromptTemplate.from_template(template)
+
+    def _get_gemini_llm(self):
+        """Build Gemini LLM instance."""
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        if not gemini_key:
+            return None
+            
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
+            google_api_key=gemini_key,
+            temperature=0.1,
+            max_retries=1
+        )
 
     def _get_groq_llm(self):
         """Build Groq LLM instance."""
@@ -52,21 +66,8 @@ class RAGEngine:
             max_retries=1
         )
 
-    def _get_gemini_llm(self):
-        """Build Gemini LLM instance."""
-        gemini_key = os.getenv("GEMINI_API_KEY")
-        if not gemini_key:
-            return None
-            
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        return ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash",
-            google_api_key=gemini_key,
-            temperature=0.1
-        )
-
     def generate_response(self, query: str, top_k: int = 4) -> Dict[str, Any]:
-        # Use simple similarity search to prevent distance score filtering drops
+        # Perform Vector Similarity Search
         try:
             docs = self.vector_store.similarity_search(query, k=top_k)
         except Exception:
@@ -85,33 +86,30 @@ class RAGEngine:
             })
 
         context_str = "\n\n---\n\n".join(context_blocks) if context_blocks else "No relevant context found."
-        
-        # 1. Primary Attempt based on UI selection
-        if self.llm_provider == "gemini":
-            gemini_llm = self._get_gemini_llm()
-            if gemini_llm:
-                try:
-                    chain = self.prompt_template | gemini_llm | StrOutputParser()
-                    answer = chain.invoke({"context": context_str, "question": query})
-                    return {"answer": answer, "sources": sources}
-                except Exception:
-                    pass
 
-        # 2. Try Groq (Default or Fallback)
-        groq_llm = self._get_groq_llm()
-        if groq_llm:
+        # 1. First Attempt: Selected Provider
+        primary_llm = self._get_gemini_llm() if self.llm_provider == "gemini" else self._get_groq_llm()
+        if primary_llm:
             try:
-                chain = self.prompt_template | groq_llm | StrOutputParser()
+                chain = self.prompt_template | primary_llm | StrOutputParser()
                 answer = chain.invoke({"context": context_str, "question": query})
                 return {"answer": answer, "sources": sources}
-            except Exception:
+            except Exception as primary_error:
+                # Log error and trigger failover if rate limited or unavailable
                 pass
 
-        # 3. Final Fallback to Gemini
-        gemini_llm = self._get_gemini_llm()
-        if gemini_llm:
-            chain = self.prompt_template | gemini_llm | StrOutputParser()
-            answer = chain.invoke({"context": context_str, "question": query})
-            return {"answer": answer, "sources": sources}
+        # 2. Fallback Attempt: Secondary Provider
+        fallback_llm = self._get_groq_llm() if self.llm_provider == "gemini" else self._get_gemini_llm()
+        if fallback_llm:
+            try:
+                chain = self.prompt_template | fallback_llm | StrOutputParser()
+                answer = chain.invoke({"context": context_str, "question": query})
+                return {"answer": answer, "sources": sources}
+            except Exception as fallback_error:
+                pass
 
-        raise RuntimeError("Neither Groq nor Gemini API keys are configured properly.")
+        # 3. Graceful User Notice if both quotas/connections fail
+        return {
+            "answer": "⚠️ Both Gemini and Groq API services are currently rate-limited or unreachable. Please wait 60 seconds and try again.",
+            "sources": sources
+        }
