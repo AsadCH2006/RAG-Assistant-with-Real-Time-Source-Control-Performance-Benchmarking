@@ -1,0 +1,11 @@
+langchain
+langchain-community
+langchain-chroma
+langchain-openai
+langchain-groq
+chromadb
+pypdf
+python-docx
+streamlit
+pandas
+plotly
