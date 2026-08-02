@@ -7,8 +7,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 class RAGEngine:
-    def __init__(self, persist_directory: str = "./vector_db"):
+    def __init__(self, persist_directory: str = "./vector_db", llm_provider: str = "groq"):
         self.persist_directory = persist_directory
+        self.llm_provider = llm_provider
 
         # 1. Local HuggingFace Embeddings
         self.embeddings = HuggingFaceEmbeddings(
@@ -79,18 +80,28 @@ class RAGEngine:
 
         context_str = "\n\n---\n\n".join(context_blocks) if context_blocks else "No relevant context found."
         
-        # Primary Attempt: Try Groq first
+        # 1. Primary Attempt based on UI selection
+        if self.llm_provider == "gemini":
+            gemini_llm = self._get_gemini_llm()
+            if gemini_llm:
+                try:
+                    chain = self.prompt_template | gemini_llm | StrOutputParser()
+                    answer = chain.invoke({"context": context_str, "question": query})
+                    return {"answer": answer, "sources": sources}
+                except Exception:
+                    pass
+
+        # 2. Try Groq (Default or Fallback)
         groq_llm = self._get_groq_llm()
         if groq_llm:
             try:
                 chain = self.prompt_template | groq_llm | StrOutputParser()
                 answer = chain.invoke({"context": context_str, "question": query})
                 return {"answer": answer, "sources": sources}
-            except Exception as e:
-                # Log error silently and fall back to Gemini
+            except Exception:
                 pass
 
-        # Secondary Attempt: Fallback to Gemini if Groq fails or key is missing
+        # 3. Final Fallback to Gemini
         gemini_llm = self._get_gemini_llm()
         if gemini_llm:
             chain = self.prompt_template | gemini_llm | StrOutputParser()
