@@ -3,10 +3,9 @@ langchain
 langchain-community
 langchain-chroma
 langchain-huggingface
-langchain-groq
 chromadb
 sentence-transformers
 pypdf
 docx2txt
 python-dotenv
-httpx
+requests
