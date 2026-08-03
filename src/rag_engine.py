@@ -1,54 +1,43 @@
 import os
 import requests
-from typing import List, Dict, Any
+from typing import Dict, Any
 import streamlit as st
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_core.documents import Document
 
 class RAGEngine:
-    def __init__(self, persist_directory: str = "./vector_db"):
+    def __init__(self, persist_directory: str = "./vector_db", llm_provider: str = "groq"):
         self.persist_directory = persist_directory
-
-        # Local HuggingFace Embeddings
         self.embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
+        self._sync_vector_store()
 
-        # Chroma Store Initializer
+    def _sync_vector_store(self):
+        """Re-syncs ChromaDB instance with latest vector database on disk."""
         self.vector_store = Chroma(
             persist_directory=self.persist_directory,
             embedding_function=self.embeddings,
             collection_name="rag_collection"
         )
 
-    def add_documents(self, documents: List[Document]):
-        """Clear old collection and store newly chunked document."""
-        try:
-            # Delete old documents in vector DB to prevent stale state
-            existing_ids = self.vector_store.get()["ids"]
-            if existing_ids:
-                self.vector_store.delete(ids=existing_ids)
-        except Exception:
-            pass
-
-        # Add new chunks to database
-        self.vector_store.add_documents(documents)
-
     def _call_groq(self, prompt: str) -> str:
-        api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY", "")).strip()
+        api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY", "")
+        api_key = api_key.strip()
+        
         if not api_key:
-            raise ValueError("GROQ_API_KEY missing from Streamlit Cloud Secrets.")
+            raise ValueError("GROQ_API_KEY is missing from Streamlit Cloud Secrets or .env file.")
 
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "User-Agent": "StreamlitRAG/1.0"
         }
         payload = {
             "model": "llama-3.3-70b-versatile",
             "messages": [
-                {"role": "system", "content": "You are a professional AI Assistant. Answer strictly based on context."},
+                {"role": "system", "content": "You are an AI assistant. Answer accurately based on the provided document contexts."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.1,
@@ -56,45 +45,71 @@ class RAGEngine:
         }
 
         response = requests.post(url, headers=headers, json=payload, timeout=25)
+        
         if response.status_code != 200:
-            raise RuntimeError(f"Groq API HTTP Error {response.status_code}: {response.text}")
+            raise RuntimeError(f"Groq API HTTP {response.status_code}: {response.text}")
 
         return response.json()["choices"][0]["message"]["content"]
 
-    def generate_response(self, query: str) -> Dict[str, Any]:
-        # Re-fetch active vector store data
-        all_data = self.vector_store.get()
-        all_docs = all_data.get("documents", [])
+    def generate_response(self, query: str, top_k: int = 4) -> Dict[str, Any]:
+        # Force re-sync with vector store on disk
+        self._sync_vector_store()
 
-        if not all_docs:
+        try:
+            raw_data = self.vector_store._collection.get()
+            raw_docs = raw_data.get("documents", []) if raw_data else []
+            metadatas = raw_data.get("metadatas", []) if raw_data else []
+        except Exception:
+            raw_docs = []
+            metadatas = []
+
+        if not raw_docs:
             return {
-                "answer": "No uploaded document found in active memory. Please upload your document first.",
+                "answer": "No active document found in vector storage. Please upload and index a document in 'Real-Time Source Control' first.",
                 "sources": []
             }
 
-        # Vector search attempt
-        docs = self.vector_store.similarity_search(query, k=5)
-        
-        # If vector distance fails on open-ended queries ("tell me about...", "what does this signify"), fallback to raw chunks
-        if not docs or any(w in query.lower() for w in ["tell me", "summary", "about", "resume", "signify", "document"]):
-            context_blocks = all_docs[:5]
+        sources = []
+        context_blocks = []
+
+        # Detect open-ended summary or overview prompts
+        broad_keywords = ["person", "resume", "document", "tell me", "summary", "signify", "about", "overview"]
+        is_broad_query = any(kw in query.lower() for kw in broad_keywords)
+
+        if is_broad_query or len(raw_docs) <= top_k:
+            # Fallback: Pull top raw chunks directly from Chroma
+            for idx, text in enumerate(raw_docs[:top_k]):
+                meta = metadatas[idx] if idx < len(metadatas) and metadatas[idx] else {}
+                context_blocks.append(text)
+                sources.append({
+                    "filename": meta.get("filename", "Uploaded Document"),
+                    "chunk_index": meta.get("chunk_index", idx),
+                    "score": 1.0,
+                    "content": text[:300] + "..."
+                })
         else:
-            context_blocks = [d.page_content for d in docs]
+            # Regular semantic vector similarity search
+            docs = self.vector_store.similarity_search(query, k=top_k)
+            for idx, doc in enumerate(docs):
+                context_blocks.append(doc.page_content)
+                sources.append({
+                    "filename": doc.metadata.get("filename", "Uploaded Document"),
+                    "chunk_index": doc.metadata.get("chunk_index", idx),
+                    "score": 1.0,
+                    "content": doc.page_content[:300] + "..."
+                })
 
         context_str = "\n\n---\n\n".join(context_blocks)
 
         prompt = (
-            f"Here is the content extracted from an uploaded document:\n\n"
-            f"--- CONTEXT START ---\n{context_str}\n--- CONTEXT END ---\n\n"
             f"Question: {query}\n\n"
+            f"Document Context:\n{context_str}\n\n"
             f"Instructions:\n"
-            f"- Answer the user's question in detail using the context above.\n"
-            f"- If the question asks what the document signifies or asks for an overview, summarize the person/document clearly.\n\n"
+            f"- Answer the user's question clearly using ONLY the provided document context.\n"
+            f"- If the query asks for an overview, summary, or what the document signifies, analyze the context and present a structured summary.\n"
+            f"- If information is completely missing, state 'I cannot find relevant information in the uploaded documents.'\n\n"
             f"Answer:"
         )
 
-        try:
-            answer = self._call_groq(prompt)
-            return {"answer": answer, "sources": context_blocks}
-        except Exception as e:
-            return {"answer": f"⚠️ LLM Error: {str(e)}", "sources": []}
+        answer = self._call_groq(prompt)
+        return {"answer": answer, "sources": sources}
