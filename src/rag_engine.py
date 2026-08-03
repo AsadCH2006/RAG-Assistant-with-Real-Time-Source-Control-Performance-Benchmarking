@@ -4,20 +4,20 @@ from typing import List, Dict, Any
 import streamlit as st
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 class RAGEngine:
-    def __init__(self, persist_directory: str = "./vector_db", llm_provider: str = "gemini"):
+    def __init__(self, persist_directory: str = "./vector_db", llm_provider: str = "groq"):
         self.persist_directory = persist_directory
-        self.llm_provider = llm_provider
 
-        # 1. Local HuggingFace Embeddings
+        # 1. HuggingFace Local Embeddings
         self.embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
 
-        # 2. Vector DB Storage
+        # 2. Vector DB (Chroma)
         self.vector_store = Chroma(
             persist_directory=self.persist_directory,
             embedding_function=self.embeddings,
@@ -28,7 +28,7 @@ class RAGEngine:
         template = (
             "You are a helpful AI Assistant.\n"
             "Answer the question using ONLY the document context provided below.\n"
-            "If the question asks for an overview or summary of the document, provide a clear, structured summary from the context.\n"
+            "If the question asks for an overview or summary of the document, provide a clean, structured summary from the context.\n"
             "If the context contains no relevant details to answer, state 'I cannot find relevant information in the uploaded documents.'\n\n"
             "Context:\n{context}\n\n"
             "Question: {question}\n\n"
@@ -36,42 +36,33 @@ class RAGEngine:
         )
         self.prompt_template = ChatPromptTemplate.from_template(template)
 
-    def _get_api_key(self, key_name: str) -> str:
-        """Fetch API keys cleanly from Streamlit secrets or environment variables."""
-        if hasattr(st, "secrets") and key_name in st.secrets:
-            return st.secrets[key_name]
-        return os.getenv(key_name, "")
+    def _get_groq_llm(self):
+        # Fetch key from Streamlit secrets or environment
+        groq_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY", ""))
+        
+        if not groq_key:
+            return None
 
-    def _get_llm(self):
-        # 1. Primary Choice: Gemini 1.5 Flash (Stable Production Model)
-        gemini_key = self._get_api_key("GEMINI_API_KEY")
-        if gemini_key:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-            return ChatGoogleGenerativeAI(
-                model="gemini-1.5-flash",
-                google_api_key=gemini_key,
-                temperature=0.1
-            )
-        
-        # 2. Fallback Choice: Groq
-        groq_key = self._get_api_key("GROQ_API_KEY")
-        if groq_key:
-            from langchain_groq import ChatGroq
-            custom_http_client = httpx.Client(timeout=20.0, follow_redirects=True)
-            return ChatGroq(
-                model_name="llama-3.3-70b-versatile",
-                temperature=0.1,
-                api_key=groq_key,
-                http_client=custom_http_client
-            )
-        
-        return None
+        # Custom HTTP Client configured to handle Streamlit Cloud outbound network limits
+        custom_http_client = httpx.Client(
+            timeout=30.0,
+            follow_redirects=True,
+            verify=True
+        )
+
+        return ChatGroq(
+            model_name="llama-3.3-70b-versatile",
+            temperature=0.1,
+            api_key=groq_key,
+            http_client=custom_http_client,
+            max_retries=2
+        )
 
     def generate_response(self, query: str, top_k: int = 4) -> Dict[str, Any]:
-        llm = self._get_llm()
+        llm = self._get_groq_llm()
         if not llm:
             return {
-                "answer": "⚠️ Missing API Keys: Please add GEMINI_API_KEY to Streamlit Cloud Secrets.",
+                "answer": "⚠️ Missing Groq API Key: Please add GROQ_API_KEY to Streamlit Cloud Secrets.",
                 "sources": []
             }
 
@@ -100,6 +91,6 @@ class RAGEngine:
             return {"answer": answer, "sources": sources}
         except Exception as e:
             return {
-                "answer": f"⚠️ Execution Error: {str(e)}",
+                "answer": f"⚠️ Groq Execution Error: {str(e)}",
                 "sources": sources
             }
