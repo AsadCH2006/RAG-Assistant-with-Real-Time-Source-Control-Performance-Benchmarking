@@ -1,5 +1,5 @@
 import os
-import httpx
+import requests
 from typing import List, Dict, Any
 import streamlit as st
 from langchain_chroma import Chroma
@@ -37,25 +37,19 @@ class RAGEngine:
         self.prompt_template = ChatPromptTemplate.from_template(template)
 
     def _get_groq_llm(self):
-        # Fetch key from Streamlit secrets or environment
+        # Fetch API Key from Streamlit Secrets or environment
         groq_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY", ""))
         
         if not groq_key:
             return None
 
-        # Custom HTTP Client configured to handle Streamlit Cloud outbound network limits
-        custom_http_client = httpx.Client(
-            timeout=30.0,
-            follow_redirects=True,
-            verify=True
-        )
-
+        # Directly pass key without custom httpx transport to avoid proxy blocking
         return ChatGroq(
             model_name="llama-3.3-70b-versatile",
             temperature=0.1,
             api_key=groq_key,
-            http_client=custom_http_client,
-            max_retries=2
+            max_retries=3,
+            request_timeout=30.0
         )
 
     def generate_response(self, query: str, top_k: int = 4) -> Dict[str, Any]:
