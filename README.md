@@ -1,6 +1,6 @@
 # 🤖 RAG Assistant with Real-Time Source Control & Performance Benchmarking
 
-A high-performance, modular Retrieval-Augmented Generation (RAG) web application built using **Streamlit**, **LangChain**, **ChromaDB**, and **Groq / OpenAI**.
+A high-performance, modular Retrieval-Augmented Generation (RAG) web application built using **Streamlit**, **LangChain**, **ChromaDB**, and **Groq .
 
 This application enables users to upload custom documents (PDF, TXT, DOCX), process and embed them locally, query the knowledge base in real-time with grounded responses, dynamically delete vector collections, evaluate response relevance, and monitor end-to-end system latency and similarity scoring via built-in performance telemetry.
 
@@ -13,8 +13,8 @@ This application enables users to upload custom documents (PDF, TXT, DOCX), proc
 * **🔍 Full Citation & Transparency:** Expandable source viewers display exact document sources, chunk indices, and vector similarity scores for every response.
 * **📊 Performance Benchmarking & Telemetry:** Track latency (min/max/average) across queries, monitor similarity score trends, and inspect detailed execution logs in real-time.
 * **🎯 Integrated Evaluation Engine:** Includes built-in evaluation capabilities (`evaluator.py`) to measure answer relevance and groundedness against retrieved context.
-* **💰 Zero-Cost Local Embeddings:** Uses `sentence-transformers/all-MiniLM-L6-v2` via HuggingFace for fast, 100% free vector embeddings—eliminating OpenAI quota limits.
-* **🚀 Multi-LLM Support:** Seamless support for high-speed inference via **Groq** (`llama-3.3-70b-versatile`) or **OpenAI** (`gpt-4o-mini`).
+* **💰 Zero-Cost Local Embeddings:** Uses `sentence-transformers/all-MiniLM-L6-v2` via HuggingFace for fast, 100% free vector embeddings.
+* **🚀 Multi-LLM Support:** Seamless support for high-speed inference via **Groq** (`llama-3.3-70b-versatile`).
 * **🎨 Modern UI/UX:** Styled dark theme with glassmorphism panels, interactive metrics, and multi-tab layout.
 
 ---
@@ -70,12 +70,10 @@ pip install -r requirements.txt
 Create a `.env` file in the root directory of your project:
 
 ```env
-OPENAI_API_KEY=sk-proj-your-openai-key-here
 GROQ_API_KEY=gsk_your-groq-key-here
 ```
 
 > **Note:**
-> * `OPENAI_API_KEY` is validated upon launch.
 > * `GROQ_API_KEY` is recommended for ultra-fast, low-latency LLM inference.
 > * Keys can also be added directly via the **Control Panel Sidebar** at runtime.
 
@@ -109,5 +107,5 @@ Open your browser at `http://localhost:8501`.
 * **Orchestration:** [LangChain](https://www.langchain.com/)
 * **Vector Store:** [ChromaDB](https://www.trychroma.com/)
 * **Embeddings:** `sentence-transformers/all-MiniLM-L6-v2` ([HuggingFace](https://huggingface.co/))
-* **LLM Engine:** [Groq API](https://groq.com/) / [OpenAI API](https://openai.com/)
+* **LLM Engine:** [Groq API](https://groq.com/)
 * **Data Processing & Evaluation:** Pandas, PyPDF, Docx2txt
