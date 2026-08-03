@@ -6,7 +6,6 @@ from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_google_genai import ChatGoogleGenerativeAI
 
 class RAGEngine:
     def __init__(self, persist_directory: str = "./vector_db", llm_provider: str = "gemini"):
@@ -29,8 +28,8 @@ class RAGEngine:
         template = (
             "You are a helpful AI Assistant.\n"
             "Answer the question using ONLY the document context provided below.\n"
-            "If the question asks for an overview or summary of the document, provide a clean breakdown of the key content.\n"
-            "If the question cannot be answered from the context, state 'I cannot find relevant information in the uploaded documents.'\n\n"
+            "If the question asks for an overview or summary of the document, provide a clear, structured summary from the context.\n"
+            "If the context contains no relevant details to answer, state 'I cannot find relevant information in the uploaded documents.'\n\n"
             "Context:\n{context}\n\n"
             "Question: {question}\n\n"
             "Answer:"
@@ -38,19 +37,23 @@ class RAGEngine:
         self.prompt_template = ChatPromptTemplate.from_template(template)
 
     def _get_api_key(self, key_name: str) -> str:
+        """Fetch API keys cleanly from Streamlit secrets or environment variables."""
         if hasattr(st, "secrets") and key_name in st.secrets:
             return st.secrets[key_name]
         return os.getenv(key_name, "")
 
     def _get_llm(self):
+        # 1. Primary Choice: Gemini 1.5 Flash (Stable Production Model)
         gemini_key = self._get_api_key("GEMINI_API_KEY")
         if gemini_key:
+            from langchain_google_genai import ChatGoogleGenerativeAI
             return ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
+                model="gemini-1.5-flash",
                 google_api_key=gemini_key,
                 temperature=0.1
             )
         
+        # 2. Fallback Choice: Groq
         groq_key = self._get_api_key("GROQ_API_KEY")
         if groq_key:
             from langchain_groq import ChatGroq
@@ -68,7 +71,7 @@ class RAGEngine:
         llm = self._get_llm()
         if not llm:
             return {
-                "answer": "⚠️ API Key Error: Please make sure your GEMINI_API_KEY or GROQ_API_KEY is correctly added to Streamlit Cloud Secrets.",
+                "answer": "⚠️ Missing API Keys: Please add GEMINI_API_KEY to Streamlit Cloud Secrets.",
                 "sources": []
             }
 
