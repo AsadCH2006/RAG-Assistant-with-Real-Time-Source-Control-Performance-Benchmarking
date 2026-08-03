@@ -14,12 +14,24 @@ class RAGEngine:
         self._sync_vector_store()
 
     def _sync_vector_store(self):
-        """Re-syncs ChromaDB instance with latest vector database on disk."""
+        """Re-syncs ChromaDB instance across possible collection names."""
+        # Try primary collection name first
         self.vector_store = Chroma(
             persist_directory=self.persist_directory,
             embedding_function=self.embeddings,
             collection_name="rag_collection"
         )
+        
+        # Fallback to default collection if primary is empty
+        try:
+            raw_data = self.vector_store._collection.get()
+            if not raw_data or not raw_data.get("documents"):
+                self.vector_store = Chroma(
+                    persist_directory=self.persist_directory,
+                    embedding_function=self.embeddings
+                )
+        except Exception:
+            pass
 
     def _call_groq(self, prompt: str) -> str:
         api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY", "")
@@ -45,14 +57,12 @@ class RAGEngine:
         }
 
         response = requests.post(url, headers=headers, json=payload, timeout=25)
-        
         if response.status_code != 200:
             raise RuntimeError(f"Groq API HTTP {response.status_code}: {response.text}")
 
         return response.json()["choices"][0]["message"]["content"]
 
     def generate_response(self, query: str, top_k: int = 4) -> Dict[str, Any]:
-        # Force re-sync with vector store on disk
         self._sync_vector_store()
 
         try:
@@ -65,19 +75,17 @@ class RAGEngine:
 
         if not raw_docs:
             return {
-                "answer": "No active document found in vector storage. Please upload and index a document in 'Real-Time Source Control' first.",
+                "answer": "No active document found in vector storage. Please re-upload your document in 'Real-Time Source Control'.",
                 "sources": []
             }
 
         sources = []
         context_blocks = []
 
-        # Detect open-ended summary or overview prompts
-        broad_keywords = ["person", "resume", "document", "tell me", "summary", "signify", "about", "overview"]
+        broad_keywords = ["person", "resume", "document", "tell me", "summary", "signify", "about", "overview", "indexed"]
         is_broad_query = any(kw in query.lower() for kw in broad_keywords)
 
         if is_broad_query or len(raw_docs) <= top_k:
-            # Fallback: Pull top raw chunks directly from Chroma
             for idx, text in enumerate(raw_docs[:top_k]):
                 meta = metadatas[idx] if idx < len(metadatas) and metadatas[idx] else {}
                 context_blocks.append(text)
@@ -88,7 +96,6 @@ class RAGEngine:
                     "content": text[:300] + "..."
                 })
         else:
-            # Regular semantic vector similarity search
             docs = self.vector_store.similarity_search(query, k=top_k)
             for idx, doc in enumerate(docs):
                 context_blocks.append(doc.page_content)
