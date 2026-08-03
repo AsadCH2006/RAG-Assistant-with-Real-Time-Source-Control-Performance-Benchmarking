@@ -1,6 +1,6 @@
 # 🤖 RAG Assistant with Real-Time Source Control & Performance Benchmarking
 
-A high-performance, modular Retrieval-Augmented Generation (RAG) web application built using **Streamlit**, **LangChain**, **ChromaDB**, and **Groq .
+A high-performance, modular Retrieval-Augmented Generation (RAG) web application built using **Streamlit**, **LangChain**, **ChromaDB**, and Groq .
 
 This application enables users to upload custom documents (PDF, TXT, DOCX), process and embed them locally, query the knowledge base in real-time with grounded responses, dynamically delete vector collections, evaluate response relevance, and monitor end-to-end system latency and similarity scoring via built-in performance telemetry.
 
